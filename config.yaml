@@ -1,0 +1,21 @@
+model:
+  yolov9_weights: "yolov9c.pt"
+  confidence_threshold: 0.25
+  violation_threshold: 0.85
+  img_size: 640
+
+camera:
+  source: "0" # Changed to 0 to test with your computer's webcam.
+
+ocr:
+  languages: ['en', 'hi']
+  confidence_threshold: 0.70
+
+database:
+  host: "localhost"
+  user: "root"
+  password: "password"
+  database: "traffic_violations"
+
+output:
+  save_dir: "outputs/violations/"
