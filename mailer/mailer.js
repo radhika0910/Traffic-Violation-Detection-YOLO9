@@ -27,11 +27,14 @@ async function sendBulkEmails() {
     for (const record of pendingData) {
         if (!record.email) continue;
         
+        // Handle null violation data
+        const hasViolation = record.violation_type !== null && record.violation_type !== undefined;
+        
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: record.email,
-            subject: '⚠️ Traffic Violation Notice - Immediate Action Required',
-            html: `
+            subject: hasViolation ? '⚠️ Traffic Violation Notice - Immediate Action Required' : '📧 Traffic Management Notice',
+            html: hasViolation ? `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e1e4e8; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                     <div style="background-color: #d73a49; padding: 20px; color: white; text-align: center;">
                         <h2 style="margin: 0;">Traffic Violation Notice</h2>
@@ -54,6 +57,31 @@ async function sendBulkEmails() {
                         
                         <div style="text-align: center; margin-top: 30px;">
                             <a href="#" style="background-color: #0366d6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold;">View Details / Pay Fine</a>
+                        </div>
+                    </div>
+                    <div style="background-color: #f6f8fa; padding: 15px; text-align: center; font-size: 12px; color: #6a737d;">
+                        &copy; 2026 Traffic Management Authority. All rights reserved.
+                    </div>
+                </div>
+            ` : `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e1e4e8; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                    <div style="background-color: #2ea44f; padding: 20px; color: white; text-align: center;">
+                        <h2 style="margin: 0;">📧 Traffic Management Notice</h2>
+                    </div>
+                    <div style="padding: 30px; background-color: #ffffff; color: #24292e;">
+                        <p style="font-size: 16px;">Dear <strong>${record.owner_name}</strong>,</p>
+                        <p style="font-size: 16px;">This is a notification from Traffic Management Authority regarding your vehicle with plate: 
+                            <strong style="background-color: #f6f8fa; padding: 4px 8px; border: 1px solid #d1d5da; border-radius: 4px;">${record.plate}</strong>
+                        </p>
+                        
+                        <div style="background-color: #f1f8ff; border-left: 4px solid #2ea44f; padding: 15px; margin: 25px 0;">
+                            <p>No specific violation details at this time. Please check the traffic management portal for more information.</p>
+                        </div>
+                        
+                        <p style="font-size: 14px; color: #586069;">If you have any questions, please contact us through the management portal.</p>
+                        
+                        <div style="text-align: center; margin-top: 30px;">
+                            <a href="#" style="background-color: #2ea44f; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold;">Visit Portal</a>
                         </div>
                     </div>
                     <div style="background-color: #f6f8fa; padding: 15px; text-align: center; font-size: 12px; color: #6a737d;">

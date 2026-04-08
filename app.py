@@ -274,54 +274,92 @@ with tab3:
         
         if 'plate' in owners_df.columns and 'email' in owners_df.columns:
             if st.button("Verify matches & Send Bulk Emails 🚀", type="primary"):
+                st.info(f"📧 Preparing to send emails to {len(owners_df)} CSV owners...")
+                
+                # Get all violations from the database
                 records = cloud_db.get_all_violations()
-                if not records:
-                    st.error("No cloud violations out there to process.")
-                else:
-                    violations_df = pd.DataFrame(records)
-                    unnotified = violations_df[(violations_df['status'] == 'Recognized') & (violations_df['email_sent'] == False)]
+                violations_df = pd.DataFrame(records) if records else pd.DataFrame()
+                
+                # Prepare email data for ALL CSV owners
+                export_data = []
+                
+                for idx, owner in owners_df.iterrows():
+                    plate = owner.get('plate', 'UNKNOWN')
                     
-                    if unnotified.empty:
-                        st.success("All recognized violations in the DB have already been emailed.")
-                    else:
-                        merged = pd.merge(unnotified, owners_df, left_on='license_plate', right_on='plate', how='inner')
+                    # Look for any violation matching this plate
+                    if not violations_df.empty:
+                        plate_violations = violations_df[violations_df['license_plate'] == plate]
                         
-                        if merged.empty:
-                            st.warning("No matched plates found between the Cloud Database and the CSV.")
-                        else:
-                            st.success(f"Matched {len(merged)} individuals ready for emailing.")
-                            
-                            # Export pending data for Node JS
-                            export_data = []
-                            for idx, row in merged.iterrows():
+                        if not plate_violations.empty:
+                            # Send with actual violation details
+                            for _, viol in plate_violations.iterrows():
                                 export_data.append({
-                                    "plate": row['license_plate'],
-                                    "owner_name": row.get('owner_name', 'Vehicle Owner'),
-                                    "email": row['email'],
-                                    "violation_type": row['violation_type'],
-                                    "timestamp": str(row['timestamp']),
-                                    "confidence": row['confidence'],
-                                    "doc_id": row['id']
+                                    "plate": plate,
+                                    "owner_name": owner.get('owner_name', 'Vehicle Owner'),
+                                    "email": owner['email'],
+                                    "violation_type": viol['violation_type'],
+                                    "timestamp": str(viol['timestamp']),
+                                    "confidence": viol['confidence'],
+                                    "doc_id": viol['id']
                                 })
-                                
-                            os.makedirs("outputs", exist_ok=True)
-                            with open('outputs/pending_emails.json', 'w') as f:
-                                json.dump(export_data, f)
+                        else:
+                            # No violation for this plate - send with null data
+                            export_data.append({
+                                "plate": plate,
+                                "owner_name": owner.get('owner_name', 'Vehicle Owner'),
+                                "email": owner['email'],
+                                "violation_type": None,
+                                "timestamp": None,
+                                "confidence": None,
+                                "doc_id": None
+                            })
+                    else:
+                        # No violations in DB at all - send to everyone with null
+                        export_data.append({
+                            "plate": plate,
+                            "owner_name": owner.get('owner_name', 'Vehicle Owner'),
+                            "email": owner['email'],
+                            "violation_type": None,
+                            "timestamp": None,
+                            "confidence": None,
+                            "doc_id": None
+                        })
+                
+                # Send emails
+                if export_data:
+                    st.success(f"✅ Ready to send {len(export_data)} emails...")
+                    
+                    os.makedirs("outputs", exist_ok=True)
+                    with open('outputs/pending_emails.json', 'w') as f:
+                        json.dump(export_data, f)
+                    
+                    with st.spinner("Calling NodeMailer Microservice..."):
+                        try:
+                            print("\n" + "="*60)
+                            print("📧 STARTING EMAIL SENDING PROCESS...")
+                            print(f"📧 Sending to {len(export_data)} recipients...")
+                            print("="*60 + "\n")
                             
-                            with st.spinner("Calling NodeMailer Microservice..."):
-                                try:
-                                    result = subprocess.run(['node', 'mailer.js'], cwd='mailer', capture_output=True, text=True, check=True)
-                                    st.success("NodeMailer executed successfully! Output Logs:")
-                                    st.code(result.stdout, language="bash")
-                                    
-                                    # Mark in CloudDB
-                                    for item in export_data:
-                                       cloud_db.mark_email_sent(item['doc_id'])
-                                       
-                                except subprocess.CalledProcessError as e:
-                                    st.error(f"NodeMailer executed with errors:\n{e.stderr}")
-                                except FileNotFoundError:
-                                    st.error("Node.js is not installed or not in PATH. Please install Node.js to use the mailer.")
+                            result = subprocess.run(['node', 'mailer.js'], cwd='mailer', text=True, check=True)
+                            
+                            print("\n" + "="*60)
+                            print("✅ EMAIL SENDING COMPLETED SUCCESSFULLY")
+                            print("="*60 + "\n")
+                            
+                            st.success("✅ All emails sent successfully! Check terminal for detailed logs.")
+                            
+                            # Mark in CloudDB (only for matched violations with doc_id)
+                            for item in export_data:
+                                if item['doc_id']:  # Only update if this is a matched violation
+                                    cloud_db.mark_email_sent(item['doc_id'])
+                                   
+                        except subprocess.CalledProcessError as e:
+                            print("\n" + "="*60)
+                            print("❌ EMAIL SENDING FAILED")
+                            print("="*60 + "\n")
+                            st.error(f"❌ NodeMailer executed with errors. Check terminal for details.")
+                        except FileNotFoundError:
+                            st.error("Node.js is not installed or not in PATH. Please install Node.js to use the mailer.")
 
         else:
             st.error("CSV must contain exactly the 'plate' and 'email' columns.")

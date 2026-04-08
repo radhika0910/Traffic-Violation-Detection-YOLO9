@@ -1,12 +1,27 @@
+# Core Deep Learning & Computer Vision
 torch>=2.0.0
 torchvision>=0.15.0
-opencv-python>=4.8.0
-easyocr>=1.7.0
+opencv-python>=4.8.0.74
 ultralytics>=8.0.0
-numpy
-pandas
-mysql-connector-python>=8.0.0
-PyYAML
-streamlit
-firebase-admin>=6.2.0
+
+# Object Detection & OCR
+easyocr>=1.7.0
+
+# Web Framework
+streamlit>=1.28.0
+
+# Data Processing
+numpy>=1.24.0
 pandas>=2.0.0
+
+# Database & Cloud
+firebase-admin>=6.2.0
+mysql-connector-python>=8.0.0
+
+# Configuration & Utils
+PyYAML>=6.0
+python-dotenv>=1.0.0
+Pillow>=10.0.0
+
+# Optional but recommended
+requests>=2.31.0
