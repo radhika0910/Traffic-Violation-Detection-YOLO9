@@ -231,20 +231,33 @@ with tab1:
                             # Optional: visualize the "hunt" area if debugging
                             # cv2.rectangle(frame, (mx1, plate_crop_y1), (mx2, my2), (255, 255, 0), 1)
 
-                    # FINAL DECISION: Only log if we actually found a readable plate
+                    # DETERMINE WHAT TO DRAW
+                    box_to_draw = v['plate']['box'] if v.get('plate') else v['motorcycle']['box']
+                    dx1, dy1, dx2, dy2 = box_to_draw
+                    
+                    # Always draw the visual highlight for the violation reason
+                    cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), (0, 0, 255), 3)
+                    
+                    # LOGGING DECISION: Always log violations to database now, 
+                    # but mark plate as 'UNKNOWN' if OCR fails to read it clearly.
                     if plate_text and len(plate_text) >= 4:
-                        # Draw highlight
-                        box_to_draw = v['plate']['box'] if v.get('plate') else v['motorcycle']['box']
-                        dx1, dy1, dx2, dy2 = box_to_draw
+                        display_text = f"VIOLATION: {v['type']} [{plate_text}]"
+                        # Background for text
+                        (tw, th), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                        cv2.rectangle(frame, (dx1, dy1 - th - 20), (dx1 + tw + 10, dy1), (0,0,255), -1)
+                        cv2.putText(frame, display_text, (dx1 + 5, dy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                         
-                        cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), (0, 0, 255), 3)
-                        cv2.putText(frame, f"VIOLATION: {plate_text}", (dx1, dy1 - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        
-                        # Log to database
+                        # Log to database with actual plate
                         cloud_db.log_violation(plate_text, plate_conf, v['type'])
                     else:
-                        # Skip this detection if no plate is found (User requirement: "if unrecognizable then skip it")
-                        continue
+                        display_text = f"VIOLATION: {v['type']} [NO PLATE]"
+                        # Background for text (Orange for unrecognized plate)
+                        (tw, th), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                        cv2.rectangle(frame, (dx1, dy1 - th - 20), (dx1 + tw + 10, dy1), (0,165,255), -1)
+                        cv2.putText(frame, display_text, (dx1 + 5, dy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        
+                        # Still log to database, but with UNKNOWN plate text
+                        cloud_db.log_violation("UNKNOWN", 0.0, v['type'])
                             
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_placeholder.image(rgb_frame, channels="RGB", use_container_width=True)

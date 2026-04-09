@@ -32,14 +32,14 @@ def check_violations(detections, violation_thresh=0.85):
             # --- CUSTOM MODEL LOGIC ---
             # If we see a 'Helmet' detection on this rider, skip helmet violation 
             # (but keep triple riding violation if applicable)
-            has_helmet = any(overlaps(h['box'], rider_box, iou_threshold=0.2) for h in helmets)
+            has_helmet = any(overlaps(h['box'], rider_box, iou_threshold=0.3, use_min_area=True) for h in helmets)
             
             # If rider has helmet AND it's not triple riding, no violation for this rider
             if has_helmet and not is_triple_riding:
                 continue
                 
             # If we see a 'No-Helmet' detection or have no helmet info at all (COCO mode)
-            is_definitely_no_helmet = any(overlaps(nh['box'], rider_box, iou_threshold=0.2) for nh in no_helmets)
+            is_definitely_no_helmet = any(overlaps(nh['box'], rider_box, iou_threshold=0.3, use_min_area=True) for nh in no_helmets)
             
             # 2. Look for associated plate
             assigned_plate = None
@@ -89,10 +89,10 @@ def is_inside(inner_box, outer_box):
     return ix1 >= ox1 and iy1 >= oy1 and ix2 <= ox2 and iy2 <= oy2
 
 
-def overlaps(box_a, box_b, iou_threshold=0.0):
+def overlaps(box_a, box_b, iou_threshold=0.0, use_min_area=False):
     """
     Return True when box_a and box_b have any overlap (iou_threshold=0)
-    or when their IoU exceeds the given threshold.
+    or when their IoU (or IoA if use_min_area=True) exceeds the given threshold.
     Also returns True when one box is fully inside the other.
     """
     ax1, ay1, ax2, ay2 = box_a
@@ -119,5 +119,10 @@ def overlaps(box_a, box_b, iou_threshold=0.0):
 
     area_a = (ax2 - ax1) * (ay2 - ay1)
     area_b = (bx2 - bx1) * (by2 - by1)
-    iou = inter_area / (area_a + area_b - inter_area + 1e-6)
+    
+    if use_min_area:
+        iou = inter_area / (min(area_a, area_b) + 1e-6)
+    else:
+        iou = inter_area / (area_a + area_b - inter_area + 1e-6)
+        
     return iou >= iou_threshold

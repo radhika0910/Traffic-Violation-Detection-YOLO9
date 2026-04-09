@@ -45,40 +45,40 @@ class Detector:
         self.conf_thresh = config['model']['confidence_threshold']
 
         # Detect whether we are using a custom model
-        # A custom model will have class names like 'Motorcycle', 'Helmet', etc.
         self.is_custom_model = self._check_custom_model()
+        
+        # Load secondary helmet model if available
+        import os
+        self.helmet_model = None
+        if os.path.exists('helmet_model.pt'):
+            self.helmet_model = YOLO('helmet_model.pt')
+            print("[INFO] Secondary Helmet Model Loaded successfully.")
 
     def _check_custom_model(self):
-        """Returns True if the loaded model has custom traffic violation classes."""
+        """Returns True if the loaded primary model has custom traffic violation classes."""
         names = list(self.model.names.values())
         custom_markers = {'Helmet', 'No-Helmet', 'License Plate',
                           'helmet', 'no-helmet', 'license plate', 'licenseplate'}
         return bool(custom_markers.intersection(set(names)))
 
     def detect(self, frame):
+        # 1. Primary Model (YOLOv9c - COCO)
         results = self.model(frame, conf=self.conf_thresh, verbose=False)[0]
-
         detections = []
+        
         for box in results.boxes:
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             conf        = float(box.conf[0])
             class_id    = int(box.cls[0])
 
             if self.is_custom_model:
-                # Custom model: use its own class names directly
                 class_name = self.model.names[class_id]
             else:
-                # COCO model: map using the COCO label list
                 class_name = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else 'unknown'
-
-                # Only keep traffic-relevant classes to reduce noise
                 if class_name not in RELEVANT_CLASSES:
                     continue
-
-                # Normalise to internal names the violation_logic expects
-                # For COCO we approximate: a person near a motorcycle = potential rider
                 if class_name == 'person':
-                    class_name = 'Rider'          # rider (may or may not have helmet)
+                    class_name = 'Rider'
                 elif class_name == 'motorcycle':
                     class_name = 'Motorcycle'
 
@@ -88,5 +88,34 @@ class Detector:
                 'class_id':   class_id,
                 'class_name': class_name,
             })
+            
+        # 2. Secondary Model (Helmet Specific)
+        if self.helmet_model is not None:
+             h_results = self.helmet_model(frame, conf=self.conf_thresh, verbose=False)[0]
+             for box in h_results.boxes:
+                 x1, y1, x2, y2 = map(int, box.xyxy[0])
+                 conf = float(box.conf[0])
+                 class_id = int(box.cls[0])
+                 raw_name = self.helmet_model.names[class_id]
+                 
+                 # Normalize labels to what violation_logic expects
+                 if raw_name == 'With Helmet':
+                     class_name = 'Helmet'
+                     # HELMET FALSE POSITIVE FILTER: 
+                     # Only accept 'Helmet' if the model is very confident (e.g. > 75%)
+                     # This helps filter out scarves and turbans which look like helmets at low conf
+                     if conf < max(self.conf_thresh, 0.75):
+                         continue
+                 elif raw_name == 'Without Helmet':
+                     class_name = 'No-Helmet'
+                 else:
+                     class_name = raw_name
+                     
+                 detections.append({
+                    'box':        (x1, y1, x2, y2),
+                    'conf':       conf,
+                    'class_id':   class_id + 100, # offset ID
+                    'class_name': class_name,
+                 })
 
         return detections
