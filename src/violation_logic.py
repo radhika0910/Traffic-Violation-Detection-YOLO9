@@ -1,85 +1,81 @@
 def check_violations(detections, violation_thresh=0.85):
     """
     Business logic for identifying violations.
-
-    Custom model mode (Helmet / No-Helmet / License Plate classes available):
-        Flags a motorcycle whose rider has a 'No-Helmet' detection + an associated License Plate.
-
-    COCO model mode (person / motorcycle only):
-        Flags a motorcycle that has a nearby rider (person) as a *potential* violation
-        since COCO cannot distinguish helmeted vs. un-helmeted riders.
-        No OCR is attempted (no license plate class in COCO).
+    - Custom mode: Checks for 'No-Helmet' or missing 'Helmet' box + Plate.
+    - COCO mode: Flags 'Rider' + 'Motorcycle' if no helmet class is found.
     """
 
-    motorcycles  = [d for d in detections if d['class_name'] == 'Motorcycle']
-    no_helmets   = [d for d in detections if d['class_name'] == 'No-Helmet']
-    helmets      = [d for d in detections if d['class_name'] == 'Helmet']
-    plates       = [d for d in detections if d['class_name'] == 'License Plate']
-    riders       = [d for d in detections if d['class_name'] == 'Rider']   # COCO mode
+    motorcycles  = [d for d in detections if d['class_name'].lower() == 'motorcycle']
+    no_helmets   = [d for d in detections if d['class_name'].lower() in ['no-helmet', 'no_helmet']]
+    helmets      = [d for d in detections if d['class_name'].lower() == 'helmet']
+    plates       = [d for d in detections if d['class_name'].lower() in ['license plate', 'plate', 'license_plate']]
+    riders       = [d for d in detections if d['class_name'].lower() in ['rider', 'person']]
 
     violations = []
     
-    PLATE_IOU_THRESH = 0.60 # >60% IoU overlap with the motorcycle box
+    PLATE_IOU_THRESH = 0.50 
 
-    # ── Custom model mode ───────────────────────────────────────────────────
-    if no_helmets or helmets or plates:
-        for mc in motorcycles:
-            mc_box = mc['box']
-
-            assigned_no_helmet = None
-            for nh in no_helmets:
-                if nh['conf'] > violation_thresh and overlaps(nh['box'], mc_box):
-                    assigned_no_helmet = nh
+    for mc in motorcycles:
+        mc_box = mc['box']
+        
+        # 1. Look for associated riders
+        assigned_riders = [r for r in riders if overlaps(r['box'], mc_box, iou_threshold=0.05)]
+        if not assigned_riders:
+            continue
+            
+        # Check for Triple Riding (3 or more people on one motorcycle)
+        is_triple_riding = len(assigned_riders) >= 3
+        
+        for rider in assigned_riders:
+            rider_box = rider['box']
+            
+            # --- CUSTOM MODEL LOGIC ---
+            # If we see a 'Helmet' detection on this rider, skip helmet violation 
+            # (but keep triple riding violation if applicable)
+            has_helmet = any(overlaps(h['box'], rider_box, iou_threshold=0.2) for h in helmets)
+            
+            # If rider has helmet AND it's not triple riding, no violation for this rider
+            if has_helmet and not is_triple_riding:
+                continue
+                
+            # If we see a 'No-Helmet' detection or have no helmet info at all (COCO mode)
+            is_definitely_no_helmet = any(overlaps(nh['box'], rider_box, iou_threshold=0.2) for nh in no_helmets)
+            
+            # 2. Look for associated plate
+            assigned_plate = None
+            for p in plates:
+                if overlaps(p['box'], mc_box, iou_threshold=PLATE_IOU_THRESH):
+                    assigned_plate = p
                     break
-                    
-            # Ambiguity Handling: check if helmet is being carried but not worn
-            # If helmet is detected, check if its y-coordinate is roughly in the top 30% of the rider's bbox.
-            # Since we only have motorcycle bbox directly, we rough estimate it based on motorcycle bbox / or assume helmet is high up.
-            # For a more robust approach, we need the "rider" bbox. Let's use the topmost part of the MC box as a proxy if rider not present.
-            carried_helmet = None
-            for h in helmets:
-                h_box = h['box']
-                if overlaps(h_box, mc_box):
-                    # Helmet bounding box center Y
-                    h_center_y = (h_box[1] + h_box[3]) / 2.0
-                    # MC bounding box center Y
-                    mc_center_y = (mc_box[1] + mc_box[3]) / 2.0
-                    
-                    # If the helmet is in the bottom half of the motorcycle detection, it's likely being carried.
-                    if h_center_y > mc_center_y:
-                         carried_helmet = h
-                         break
 
-            # If a helmet is carried (or there is a clear no-helmet detection), flag violation.
-            if assigned_no_helmet or carried_helmet:
-                assigned_plate = None
-                for p in plates:
-                    # Spatial Analysis: Logic to ensure the license plate bounding box has a >60% IoU overlap with the motorcycle box.
-                    if overlaps(p['box'], mc_box, iou_threshold=PLATE_IOU_THRESH):
-                        assigned_plate = p
-                        break
+            # 3. Determine violation type
+            reasons = []
+            if is_triple_riding:
+                reasons.append("Triple Riding")
+            
+            if not has_helmet:
+                if is_definitely_no_helmet:
+                    reasons.append("No Helmet Detected")
+                elif not any(helmets) and not any(no_helmets):
+                    # COCO Mode: Infer violation because we can't see helmet class
+                    reasons.append("Potential Helmet Violation")
+                else:
+                    # Custom model but no helmet box found
+                    reasons.append("Missing Helmet")
 
-                if assigned_plate:
-                    violations.append({
-                        'type':       'no_helmet' if assigned_no_helmet else 'helmet_carried_not_worn',
-                        'motorcycle': mc,
-                        'no_helmet':  assigned_no_helmet or carried_helmet,
-                        'plate':      assigned_plate,
-                    })
+            if not reasons:
+                continue
 
-    # ── COCO model mode (approximate) ──────────────────────────────────────
-    else:
-        for mc in motorcycles:
-            mc_box = mc['box']
-            for rider in riders:
-                if overlaps(rider['box'], mc_box, iou_threshold=0.05):
-                    violations.append({
-                        'type':       'potential_rider',
-                        'motorcycle': mc,
-                        'rider':      rider,
-                        'plate':      None,   # COCO has no license plate class
-                    })
-                    break
+            viol_type = " & ".join(reasons)
+
+            # Always return the motorcycle box as a anchor if plate is missing
+            # The app will use this to "hunt" for the plate via OCR
+            violations.append({
+                'type':       viol_type,
+                'motorcycle': mc,
+                'rider':      rider,
+                'plate':      assigned_plate,
+            })
 
     return violations
 
@@ -113,6 +109,11 @@ def overlaps(box_a, box_b, iou_threshold=0.0):
 
     if inter_area == 0:
         return False
+        
+    # Check if one is entirely inside the other (subset)
+    if is_inside(box_a, box_b) or is_inside(box_b, box_a):
+        return True
+        
     if iou_threshold == 0.0:
         return True
 

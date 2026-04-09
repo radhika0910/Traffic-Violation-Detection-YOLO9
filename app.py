@@ -124,10 +124,15 @@ if "uploaded_video_path" not in st.session_state: st.session_state.uploaded_vide
 detector, ocr = load_models(config)
 cloud_db = load_cloud_db()
 
+if cloud_db.connected:
+    st.sidebar.success("✅ Connected to Firebase Cloud")
+else:
+    st.sidebar.warning("⚠️ Using Local SQL (Cloud Disconnected)")
+
 st.markdown("""
 <div class="header-strip">
     <h1>🚦 IntelliTraffic System</h1>
-    <p style="margin:0; color:#cfe2ff;">Advanced YOLOv9 Engine + Embedded SQL Database + Bulk Email NodeMailer</p>
+    <p style="margin:0; color:#cfe2ff;">Advanced YOLOv9 Engine + Firebase Cloud Dashboard + Bulk Email NodeMailer</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -202,27 +207,44 @@ with tab1:
 
                 # Process specific violations
                 for v in violations:
+                    plate_text = None
+                    plate_conf = 0.0
+                    
+                    # Case A: Custom model found a Plate box
                     if v.get('plate') is not None:
                         px1, py1, px2, py2 = v['plate']['box']
                         plate_img = frame[py1:py2, px1:px2]
                         if plate_img.size > 0:
-                            plate_text, conf = ocr.recognize(plate_img)
-                            if plate_text:
-                                # 1. Log to SQL Database
-                                cloud_db.log_violation(plate_text, conf, v['type'])
-                                
-                                # 2. Draw Red Highlight
-                                cv2.rectangle(frame, (px1, py1), (px2, py2), (0, 0, 255), 3)
-                                cv2.putText(frame, f"VIOLATION: {plate_text}", (px1, py1 - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    else:
-                        # Fallback for COCO approx mode (No custom classes yet)
+                            plate_text, plate_conf = ocr.recognize(plate_img)
+                            
+                    # Case B: COCO mode - we need to hunt for the plate in the MC area
+                    elif v.get('motorcycle') is not None:
                         mx1, my1, mx2, my2 = v['motorcycle']['box']
-                        cv2.rectangle(frame, (mx1, my1), (mx2, my2), (0, 165, 255), 3)
-                        cv2.putText(frame, "Potential Violation", (mx1, my1 - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+                        # Typical plate area: bottom 40% of the motorcycle box
+                        h = my2 - my1
+                        buffer = int(h * 0.6)
+                        plate_crop_y1 = max(my1, my2 - buffer)
+                        plate_area = frame[plate_crop_y1:my2, mx1:mx2]
                         
-                        # We must log this to the SQL database even if we have no plate text!
-                        # We pass generic 'UNKNOWN' for plate text so it gets marked 'Unrecognized'
-                        cloud_db.log_violation("UNKNOWN", v['motorcycle']['conf'], "Potential Rider Violation")
+                        if plate_area.size > 0:
+                            plate_text, plate_conf = ocr.recognize(plate_area)
+                            # Optional: visualize the "hunt" area if debugging
+                            # cv2.rectangle(frame, (mx1, plate_crop_y1), (mx2, my2), (255, 255, 0), 1)
+
+                    # FINAL DECISION: Only log if we actually found a readable plate
+                    if plate_text and len(plate_text) >= 4:
+                        # Draw highlight
+                        box_to_draw = v['plate']['box'] if v.get('plate') else v['motorcycle']['box']
+                        dx1, dy1, dx2, dy2 = box_to_draw
+                        
+                        cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), (0, 0, 255), 3)
+                        cv2.putText(frame, f"VIOLATION: {plate_text}", (dx1, dy1 - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        
+                        # Log to database
+                        cloud_db.log_violation(plate_text, plate_conf, v['type'])
+                    else:
+                        # Skip this detection if no plate is found (User requirement: "if unrecognizable then skip it")
+                        continue
                             
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_placeholder.image(rgb_frame, channels="RGB", use_container_width=True)

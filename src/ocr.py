@@ -34,33 +34,28 @@ class PlateRecognizer:
         return thresh
 
     def recognize(self, plate_img):
-        # Apply preprocessing
-        processed = self.preprocess_plate(plate_img)
-        
-        # Extract text (allowing alphanumeric chars suitable for Indian plates)
-        results = self.reader.readtext(processed, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-        
         best_text = ""
         best_conf = 0.0
         
-        indian_plate_pattern = re.compile(r'^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$')
+        # Try two passes: 1. Processed, 2. Raw
+        passes = [self.preprocess_plate(plate_img), plate_img]
         
-        for (bbox, text, prob) in results:
-            # Clean text: remove spaces and non-alphanumeric chars
-            clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
+        for idx, img in enumerate(passes):
+            # Extract text (allowing alphanumeric chars)
+            results = self.reader.readtext(img, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
             
-            if prob > self.conf_thresh and prob > best_conf:
-                # Format validation: check if it roughly matches Indian license plate format
-                # We do a basic check, or if it strictly matches the regex
-                if indian_plate_pattern.match(clean_text):
-                    best_text = clean_text
-                    best_conf = prob
-                # Fallback: if it doesn't strictly match but has high confidence and reasonable length
-                elif len(clean_text) >= 8 and len(clean_text) <= 10 and prob > best_conf + 0.1:
-                     best_text = clean_text
-                     best_conf = prob
-                elif not best_text: # keep the highest if nothing matched format
-                    best_text = clean_text
-                    best_conf = prob
+            for (bbox, text, prob) in results:
+                # Clean text: remove spaces and non-alphanumeric chars
+                clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
+                
+                # Length check: most plates are 4-10 chars. User's example might be shorter.
+                if len(clean_text) >= 4 and len(clean_text) <= 12:
+                    if prob > best_conf:
+                        best_text = clean_text
+                        best_conf = prob
+                        
+            # If we got a high confidence hit in pass 1, skip pass 2
+            if best_conf > 0.8:
+                break
 
         return best_text, best_conf
