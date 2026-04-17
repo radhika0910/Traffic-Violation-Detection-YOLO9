@@ -101,10 +101,7 @@ class Detector:
                  # Normalize labels to what violation_logic expects
                  if raw_name == 'With Helmet':
                      class_name = 'Helmet'
-                     # HELMET FALSE POSITIVE FILTER: 
-                     # Only accept 'Helmet' if the model is very confident (e.g. > 75%)
-                     # This helps filter out scarves and turbans which look like helmets at low conf
-                     if conf < max(self.conf_thresh, 0.75):
+                     if conf < self.conf_thresh:
                          continue
                  elif raw_name == 'Without Helmet':
                      class_name = 'No-Helmet'

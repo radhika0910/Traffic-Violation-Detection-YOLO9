@@ -45,7 +45,7 @@ class CloudDatabase:
         conn.close()
 
     def log_violation(self, plate_text, conf, violation_type, snapshot_url=""):
-        status = "Recognized" if plate_text and plate_text != "UNKNOWN" and len(plate_text) >= 4 else "Unrecognized"
+        status = "Recognized" if plate_text and plate_text != "UNKNOWN" and len(plate_text) >= 3 else "Unrecognized"
         timestamp_str = datetime.now().isoformat()
         
         # Log to SQLite

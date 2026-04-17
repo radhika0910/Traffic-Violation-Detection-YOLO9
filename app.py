@@ -196,6 +196,9 @@ with tab1:
                     st.session_state.running = False
                     break
                     
+                if len(frame.shape) == 3 and frame.shape[2] == 4:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    
                 detections = detector.detect(frame)
                 violations = check_violations(detections, viol_thresh)
                 
@@ -220,9 +223,9 @@ with tab1:
                     # Case B: COCO mode - we need to hunt for the plate in the MC area
                     elif v.get('motorcycle') is not None:
                         mx1, my1, mx2, my2 = v['motorcycle']['box']
-                        # Typical plate area: bottom 40% of the motorcycle box
+                        # Expanding plate search area: bottom 80% of the motorcycle box
                         h = my2 - my1
-                        buffer = int(h * 0.6)
+                        buffer = int(h * 0.8)
                         plate_crop_y1 = max(my1, my2 - buffer)
                         plate_area = frame[plate_crop_y1:my2, mx1:mx2]
                         
@@ -235,29 +238,35 @@ with tab1:
                     box_to_draw = v['plate']['box'] if v.get('plate') else v['motorcycle']['box']
                     dx1, dy1, dx2, dy2 = box_to_draw
                     
-                    # Always draw the visual highlight for the violation reason
-                    cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), (0, 0, 255), 3)
+                    is_violation = v['type'] != "Vehicle Detected"
+                    color = (0, 0, 255) if is_violation else (0, 200, 0)
                     
-                    # LOGGING DECISION: Always log violations to database now, 
+                    # Always draw the visual highlight for the violation reason
+                    cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), color, 3)
+                    
+                    # LOGGING DECISION: Always log all vehicles to database now, 
                     # but mark plate as 'UNKNOWN' if OCR fails to read it clearly.
-                    if plate_text and len(plate_text) >= 4:
-                        display_text = f"VIOLATION: {v['type']} [{plate_text}]"
+                    if plate_text and len(plate_text) >= 3:
+                        display_text = f"{'VIOLATION: ' if is_violation else ''}{v['type']} [{plate_text}]"
                         # Background for text
                         (tw, th), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                        cv2.rectangle(frame, (dx1, dy1 - th - 20), (dx1 + tw + 10, dy1), (0,0,255), -1)
+                        cv2.rectangle(frame, (dx1, dy1 - th - 20), (dx1 + tw + 10, dy1), color, -1)
                         cv2.putText(frame, display_text, (dx1 + 5, dy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                         
                         # Log to database with actual plate
-                        cloud_db.log_violation(plate_text, plate_conf, v['type'])
+                        db_type = "None" if not is_violation else v['type']
+                        cloud_db.log_violation(plate_text, plate_conf, db_type)
                     else:
-                        display_text = f"VIOLATION: {v['type']} [NO PLATE]"
-                        # Background for text (Orange for unrecognized plate)
+                        display_text = f"{'VIOLATION: ' if is_violation else ''}{v['type']} [NO PLATE]"
+                        # Background for text (Orange for unrecognized plate, or lighter green if not)
+                        bg_color = (0, 165, 255) if is_violation else (0, 150, 0)
                         (tw, th), _ = cv2.getTextSize(display_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                        cv2.rectangle(frame, (dx1, dy1 - th - 20), (dx1 + tw + 10, dy1), (0,165,255), -1)
+                        cv2.rectangle(frame, (dx1, dy1 - th - 20), (dx1 + tw + 10, dy1), bg_color, -1)
                         cv2.putText(frame, display_text, (dx1 + 5, dy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                         
                         # Still log to database, but with UNKNOWN plate text
-                        cloud_db.log_violation("UNKNOWN", 0.0, v['type'])
+                        db_type = "None" if not is_violation else v['type']
+                        cloud_db.log_violation("UNKNOWN", 0.0, db_type)
                             
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_placeholder.image(rgb_frame, channels="RGB", use_container_width=True)

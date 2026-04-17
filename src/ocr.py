@@ -42,20 +42,29 @@ class PlateRecognizer:
         
         for idx, img in enumerate(passes):
             # Extract text (allowing alphanumeric chars)
-            results = self.reader.readtext(img, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+            results = self.reader.readtext(img, allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', detail=1)
             
+            valid_results = []
             for (bbox, text, prob) in results:
-                # Clean text: remove spaces and non-alphanumeric chars
                 clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
+                if len(clean_text) >= 2 and prob > 0.2:
+                    valid_results.append((bbox, clean_text, prob))
+            
+            if valid_results:
+                # Sort by Y-coordinate of top-left corner to get proper top-to-bottom reading
+                valid_results.sort(key=lambda x: x[0][0][1])
                 
-                # Length check: most plates are 4-10 chars. User's example might be shorter.
-                if len(clean_text) >= 4 and len(clean_text) <= 12:
-                    if prob > best_conf:
-                        best_text = clean_text
-                        best_conf = prob
-                        
+                # Combine all text patches
+                combined_text = "".join([x[1] for x in valid_results])
+                avg_conf = sum([x[2] for x in valid_results]) / len(valid_results)
+                
+                if len(combined_text) >= 3 and len(combined_text) <= 15:
+                    if avg_conf > best_conf:
+                        best_text = combined_text
+                        best_conf = avg_conf
+
             # If we got a high confidence hit in pass 1, skip pass 2
-            if best_conf > 0.8:
+            if best_conf > 0.7:
                 break
 
         return best_text, best_conf

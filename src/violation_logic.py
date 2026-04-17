@@ -18,64 +18,69 @@ def check_violations(detections, violation_thresh=0.85):
     for mc in motorcycles:
         mc_box = mc['box']
         
-        # 1. Look for associated riders
+        # Look for associated plate
+        assigned_plate = None
+        for p in plates:
+            if overlaps(p['box'], mc_box, iou_threshold=PLATE_IOU_THRESH):
+                assigned_plate = p
+                break
+
+        # Look for associated riders
         assigned_riders = [r for r in riders if overlaps(r['box'], mc_box, iou_threshold=0.05)]
+        
         if not assigned_riders:
+            violations.append({
+                'type':       'Vehicle Detected',
+                'motorcycle': mc,
+                'rider':      None,
+                'plate':      assigned_plate,
+            })
             continue
             
         # Check for Triple Riding (3 or more people on one motorcycle)
         is_triple_riding = len(assigned_riders) >= 3
         
+        mc_reasons = set()
+        if is_triple_riding:
+            mc_reasons.add("Triple Riding")
+        
         for rider in assigned_riders:
-            rider_box = rider['box']
+            rx1, ry1, rx2, ry2 = rider['box']
+            # COCO Person bounding box sometimes misses the head, especially for pillion riders.
+            # Expand the top of the box to safely catch the helmet.
+            h_rider = ry2 - ry1
+            expanded_rider_box = (rx1, max(0, ry1 - int(h_rider * 0.4)), rx2, ry2)
             
-            # --- CUSTOM MODEL LOGIC ---
-            # If we see a 'Helmet' detection on this rider, skip helmet violation 
-            # (but keep triple riding violation if applicable)
-            has_helmet = any(overlaps(h['box'], rider_box, iou_threshold=0.3, use_min_area=True) for h in helmets)
+            my_helmets = [h for h in helmets if overlaps(h['box'], expanded_rider_box, iou_threshold=0.1, use_min_area=True)]
+            my_no_helmets = [nh for nh in no_helmets if overlaps(nh['box'], expanded_rider_box, iou_threshold=0.1, use_min_area=True)]
             
-            # If rider has helmet AND it's not triple riding, no violation for this rider
-            if has_helmet and not is_triple_riding:
-                continue
-                
-            # If we see a 'No-Helmet' detection or have no helmet info at all (COCO mode)
-            is_definitely_no_helmet = any(overlaps(nh['box'], rider_box, iou_threshold=0.3, use_min_area=True) for nh in no_helmets)
+            best_helmet_conf = max([h['conf'] for h in my_helmets] + [0.0])
+            best_no_helmet_conf = max([nh['conf'] for nh in my_no_helmets] + [0.0])
             
-            # 2. Look for associated plate
-            assigned_plate = None
-            for p in plates:
-                if overlaps(p['box'], mc_box, iou_threshold=PLATE_IOU_THRESH):
-                    assigned_plate = p
-                    break
-
-            # 3. Determine violation type
-            reasons = []
-            if is_triple_riding:
-                reasons.append("Triple Riding")
+            has_helmet = best_helmet_conf > best_no_helmet_conf and best_helmet_conf > 0.0
+            is_definitely_no_helmet = best_no_helmet_conf >= best_helmet_conf and best_no_helmet_conf > 0.0
             
             if not has_helmet:
                 if is_definitely_no_helmet:
-                    reasons.append("No Helmet Detected")
+                    mc_reasons.add("No Helmet Detected")
                 elif not any(helmets) and not any(no_helmets):
                     # COCO Mode: Infer violation because we can't see helmet class
-                    reasons.append("Potential Helmet Violation")
+                    mc_reasons.add("Potential Helmet Violation")
                 else:
                     # Custom model but no helmet box found
-                    reasons.append("Missing Helmet")
+                    mc_reasons.add("Missing Helmet")
 
-            if not reasons:
-                continue
+        if not mc_reasons:
+            viol_type = "Vehicle Detected"
+        else:
+            viol_type = " & ".join(sorted(list(mc_reasons)))
 
-            viol_type = " & ".join(reasons)
-
-            # Always return the motorcycle box as a anchor if plate is missing
-            # The app will use this to "hunt" for the plate via OCR
-            violations.append({
-                'type':       viol_type,
-                'motorcycle': mc,
-                'rider':      rider,
-                'plate':      assigned_plate,
-            })
+        violations.append({
+            'type':       viol_type,
+            'motorcycle': mc,
+            'rider':      assigned_riders[0] if assigned_riders else None,
+            'plate':      assigned_plate,
+        })
 
     return violations
 
